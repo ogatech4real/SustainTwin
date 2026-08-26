@@ -14,7 +14,7 @@ authors:
     given-names: "Geetika"
   - family-names: "Short"
     given-names: "Michael"
-repository-code: "REPLACE_WITH_GITHUB_REPOSITORY_URL"
+repository-code: "https://github.com/ogatech4real/SustainTwin"
 abstract: "SustainTwin is a lightweight physics-aware digital twin research framework for controlled fault-data generation, traceable experimentation and leakage-aware diagnostic evaluation in a fan-driven thermal process."
 keywords:
   - digital twin
