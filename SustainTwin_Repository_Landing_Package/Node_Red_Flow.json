@@ -1,0 +1,2874 @@
+[
+    {
+        "id": "b09dabf0b3dad6af",
+        "type": "tab",
+        "label": "SustainTwin Research Demonstrator",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "a53c3cf10626dce1",
+        "type": "mqtt in",
+        "z": "b09dabf0b3dad6af",
+        "name": "Factory Fan Data (UNO R4)",
+        "topic": "factory/fan/data",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "mqtt_broker_ai",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 520,
+        "y": 60,
+        "wires": [
+            [
+                "b52a6cd0e6cebadc"
+            ]
+        ]
+    },
+    {
+        "id": "b52a6cd0e6cebadc",
+        "type": "json",
+        "z": "b09dabf0b3dad6af",
+        "name": "Parse JSON",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 530,
+        "y": 200,
+        "wires": [
+            [
+                "13719ccc8076f2cd"
+            ]
+        ]
+    },
+    {
+        "id": "13719ccc8076f2cd",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Normalise Twin Telemetry",
+        "func": "\nvar raw = msg.payload;\n\nif (typeof raw === \"string\") {\n    try {\n        raw = JSON.parse(raw);\n    } catch (error) {\n        node.error(\n            \"Invalid telemetry JSON\",\n            msg\n        );\n\n        return null;\n    }\n}\n\nraw = raw || {};\n\nvar trueState =\n    raw.true_state || {};\n\nvar inputs =\n    raw.inputs || {};\n\nvar control =\n    raw.control || {};\n\nvar operatingMode =\n    raw.operating_mode || {};\n\nvar health =\n    raw.health || {};\n\nvar fault =\n    raw.fault || {};\n\nvar effects =\n    raw.fault_effects || {};\n\nfunction numeric(\n    primaryValue,\n    fallbackValue,\n    defaultValue\n) {\n    var selected =\n        primaryValue !== undefined &&\n        primaryValue !== null\n            ? primaryValue\n            : fallbackValue;\n\n    var result =\n        Number(selected);\n\n    return Number.isFinite(result)\n        ? result\n        : defaultValue;\n}\n\nvar now =\n    Date.now();\n\nvar previousReceiveTime =\n    context.get(\n        \"previousReceiveTime\"\n    );\n\nvar interArrivalMs =\n    previousReceiveTime !== undefined\n        ? now - previousReceiveTime\n        : null;\n\ncontext.set(\n    \"previousReceiveTime\",\n    now\n);\n\nvar sequenceId =\n    numeric(\n        raw.sequence_id,\n        null,\n        0\n    );\n\nvar previousSequence =\n    context.get(\n        \"previousSequence\"\n    );\n\nvar sequenceGap =\n    previousSequence !== undefined\n        ? sequenceId -\n          previousSequence\n        : null;\n\ncontext.set(\n    \"previousSequence\",\n    sequenceId\n);\n\nvar streamStatus =\n    interArrivalMs === null ||\n    interArrivalMs <= 2500\n        ? \"LIVE\"\n        : \"DELAYED\";\n\nvar synchronisationStatus;\n\nif (\n    sequenceGap === null ||\n    sequenceGap === 1\n) {\n    synchronisationStatus =\n        streamStatus === \"LIVE\"\n            ? \"SYNCHRONISED\"\n            : \"DELAYED\";\n} else {\n    synchronisationStatus =\n        \"SEQUENCE GAP\";\n}\n\nvar temperature =\n    numeric(\n        trueState.temperature_c,\n        raw.temp,\n        0\n    );\n\nvar rpm =\n    numeric(\n        trueState.speed_rpm,\n        raw.rpm,\n        0\n    );\n\nvar current =\n    numeric(\n        trueState.current_a,\n        raw.current,\n        0\n    );\n\nvar vibration =\n    numeric(\n        trueState.vibration_g,\n        raw.vibration,\n        0\n    );\n\nvar supplyVoltage =\n    numeric(\n        inputs.supply_voltage_v,\n        230,\n        230\n    );\n\nvar power =\n    numeric(\n        trueState.power_w,\n        current *\n        supplyVoltage,\n        0\n    );\n\nvar energy =\n    numeric(\n        trueState.energy_wh,\n        null,\n        0\n    );\n\nvar coolingRate =\n    numeric(\n        trueState\n            .cooling_rate_c_per_s,\n        null,\n        0\n    );\n\nvar coolingEfficiency =\n    numeric(\n        trueState\n            .cooling_efficiency,\n        effects\n            .cooling_efficiency,\n        1\n    );\n\nvar thermalResistance =\n    numeric(\n        trueState\n            .thermal_resistance_c_per_w,\n        effects\n            .thermal_resistance_c_per_w,\n        0.18\n    );\n\nvar GRID_CO2_G_PER_WH =\n    0.233;\n\nvar co2 =\n    energy *\n    GRID_CO2_G_PER_WH;\n\nvar thermalEff =\n    Math.abs(coolingRate) /\n    Math.max(1, power) *\n    100000;\n\nvar speedCommandPct =\n    numeric(\n        inputs.speed_command_pct,\n        null,\n        0\n    );\n\nvar targetRpm =\n    speedCommandPct /\n    100 *\n    3000;\n\nvar speedErrorRpm =\n    rpm -\n    targetRpm;\n\nvar anomaly =\n    fault.active === true ||\n    raw.anomaly === true;\n\nvar normalised = {\n    assetId:\n        raw.asset_id ||\n        \"UNKNOWN\",\n\n    schemaVersion:\n        raw.schema_version ||\n        \"\",\n\n    modelVersion:\n        raw.model_version ||\n        \"\",\n\n    sequenceId:\n        sequenceId,\n\n    sequenceGap:\n        sequenceGap,\n\n    sourceTimeMs:\n        numeric(\n            raw.source_time_ms,\n            raw.timestamp,\n            0\n        ),\n\n    receiveTimeMs:\n        now,\n\n    interArrivalMs:\n        interArrivalMs,\n\n    streamStatus:\n        streamStatus,\n\n    synchronisationStatus:\n        synchronisationStatus,\n\n    controlMode:\n        raw.control_mode ||\n        control.mode ||\n        \"UNKNOWN\",\n\n    operatingMode:\n        operatingMode.label ||\n        \"UNKNOWN\",\n\n    operatingModeCode:\n        numeric(\n            operatingMode.code,\n            null,\n            0\n        ),\n\n    speedCommandPct:\n        speedCommandPct,\n\n    targetRpm:\n        Number(\n            targetRpm.toFixed(1)\n        ),\n\n    speedErrorRpm:\n        Number(\n            speedErrorRpm.toFixed(1)\n        ),\n\n    processHeatLoadW:\n        numeric(\n            inputs\n                .process_heat_load_w,\n            null,\n            0\n        ),\n\n    effectiveProcessHeatLoadW:\n        numeric(\n            effects\n                .effective_process_heat_load_w,\n            inputs\n                .process_heat_load_w,\n            0\n        ),\n\n    mechanicalLoad:\n        numeric(\n            inputs.mechanical_load,\n            null,\n            0\n        ),\n\n    effectiveMechanicalLoad:\n        numeric(\n            effects\n                .effective_mechanical_load,\n            inputs.mechanical_load,\n            0\n        ),\n\n    ambientTemperatureC:\n        numeric(\n            inputs\n                .ambient_temperature_c,\n            null,\n            0\n        ),\n\n    humidityPct:\n        numeric(\n            inputs.humidity_pct,\n            null,\n            0\n        ),\n\n    dustLevel:\n        numeric(\n            inputs.dust_level,\n            null,\n            0\n        ),\n\n    supplyVoltageV:\n        supplyVoltage,\n\n    temp:\n        Number(\n            temperature.toFixed(2)\n        ),\n\n    rpm:\n        Math.round(rpm),\n\n    current:\n        Number(\n            current.toFixed(3)\n        ),\n\n    vibration:\n        Number(\n            vibration.toFixed(4)\n        ),\n\n    power:\n        Number(\n            power.toFixed(2)\n        ),\n\n    energy:\n        Number(\n            energy.toFixed(4)\n        ),\n\n    coolingRate:\n        Number(\n            coolingRate.toFixed(5)\n        ),\n\n    coolingEfficiency:\n        Number(\n            coolingEfficiency\n                .toFixed(4)\n        ),\n\n    thermalResistance:\n        Number(\n            thermalResistance\n                .toFixed(4)\n        ),\n\n    thermalEff:\n        Number(\n            thermalEff.toFixed(3)\n        ),\n\n    co2:\n        Number(\n            co2.toFixed(4)\n        ),\n\n    healthOverall:\n        numeric(\n            health.overall,\n            null,\n            100\n        ),\n\n    healthStatus:\n        health.status ||\n        \"UNKNOWN\",\n\n    faultCode:\n        fault.code ||\n        \"F0\",\n\n    faultClassId:\n        numeric(\n            fault.class_id,\n            null,\n            0\n        ),\n\n    faultBinaryLabel:\n        numeric(\n            fault.binary_label,\n            anomaly ? 1 : 0,\n            0\n        ),\n\n    faultLabel:\n        fault.label ||\n        \"healthy\",\n\n    faultSeverity:\n        numeric(\n            fault.severity,\n            null,\n            0\n        ),\n\n    faultActive:\n        fault.active === true,\n\n    faultActivatedAtMs:\n        numeric(\n            fault.activated_at_ms,\n            null,\n            0\n        ),\n\n    faultLastChangeMs:\n        numeric(\n            fault\n                .last_change_time_ms,\n            null,\n            0\n        ),\n\n    currentMultiplier:\n        numeric(\n            effects\n                .current_multiplier,\n            null,\n            1\n        ),\n\n    vibrationOffsetG:\n        numeric(\n            effects\n                .vibration_offset_g,\n            null,\n            0\n        ),\n\n    addedHeatLoadW:\n        numeric(\n            effects\n                .added_heat_load_w,\n            null,\n            0\n        ),\n\n    anomaly:\n        anomaly,\n\n    acceptedCommands:\n        numeric(\n            control\n                .accepted_commands,\n            null,\n            0\n        ),\n\n    rejectedCommands:\n        numeric(\n            control\n                .rejected_commands,\n            null,\n            0\n        ),\n\n    lastCommandTimeMs:\n        numeric(\n            control\n                .last_command_time_ms,\n            null,\n            0\n        ),\n\n    experimentRunId:\n        flow.get(\n            \"experimentRunId\"\n        ) || \"\",\n\n    experimentPhase:\n        flow.get(\n            \"experimentPhase\"\n        ) || \"IDLE\",\n\n    selectedFaultCode:\n        flow.get(\n            \"selectedFaultCode\"\n        ) || \"F0\",\n\n    selectedFaultSeverity:\n        Number(\n            flow.get(\n                \"selectedFaultSeverity\"\n            ) || 0\n        ),\n\n    selectedReplicate:\n        Number(\n            flow.get(\n                \"selectedReplicate\"\n            ) || 1\n        ),\n\n    ts:\n        now\n};\n\nmsg.payload =\n    normalised;\n\nmsg.data =\n    normalised;\n\nflow.set(\n    \"latestTwinState\",\n    normalised\n);\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 300,
+        "wires": [
+            [
+                "9176ceffcb6ebdfe",
+                "27619185363e7754",
+                "dd75fbb79293a246",
+                "9ff10b1a95f206fc",
+                "1a4f90c26e2136be",
+                "8c864dd8f8c3d0e4",
+                "5245181824f02d4a",
+                "4a7a3db70434caee",
+                "a1b62af0a03ba388",
+                "a8fc5f09494305d2",
+                "d6ce2449902987ce",
+                "e09c55bc0ce4e0cf",
+                "fdd61485a3fd3e21",
+                "2afe6c134cf59d03",
+                "dfe0d3441617ebce",
+                "5322d92a260de723"
+            ]
+        ]
+    },
+    {
+        "id": "9176ceffcb6ebdfe",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Temperature",
+        "func": "msg.topic = \"Temperature (°C)\";\nmsg.payload = msg.payload.temp;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 830,
+        "y": 80,
+        "wires": [
+            [
+                "ca8f0f4b170db1c9",
+                "43211e862ccf6cb4"
+            ]
+        ]
+    },
+    {
+        "id": "27619185363e7754",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ RPM",
+        "func": "msg.topic = \"Fan Speed (RPM)\";\nmsg.payload = msg.payload.rpm;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 830,
+        "y": 120,
+        "wires": [
+            [
+                "7274a267aef8d7e4",
+                "2d4c7719c354d48f"
+            ]
+        ]
+    },
+    {
+        "id": "dd75fbb79293a246",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Current",
+        "func": "msg.topic = \"Motor Current (A)\";\nmsg.payload = msg.payload.current;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 840,
+        "y": 160,
+        "wires": [
+            [
+                "05f22748182ef261",
+                "b417917bcf11b268"
+            ]
+        ]
+    },
+    {
+        "id": "9ff10b1a95f206fc",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Vibration",
+        "func": "msg.topic = \"Vibration (g RMS)\";\nmsg.payload = msg.payload.vibration;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 850,
+        "y": 200,
+        "wires": [
+            [
+                "4a0900c1f57ab291",
+                "e9323f3e9d031947"
+            ]
+        ]
+    },
+    {
+        "id": "1a4f90c26e2136be",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Power",
+        "func": "msg.topic = \"Power (W)\";\nmsg.payload = msg.payload.power;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 840,
+        "y": 240,
+        "wires": [
+            [
+                "764fcb76c4061bda",
+                "8193ebedcf91eb75"
+            ]
+        ]
+    },
+    {
+        "id": "8c864dd8f8c3d0e4",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Energy",
+        "func": "msg.topic = \"Energy (Wh)\";\nmsg.payload = msg.payload.energy;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 850,
+        "y": 280,
+        "wires": [
+            [
+                "c665bc5ab9583d9e",
+                "cd43b63cc2719721"
+            ]
+        ]
+    },
+    {
+        "id": "5245181824f02d4a",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Cooling Rate",
+        "func": "msg.topic = \"Cooling Rate (°C/s)\";\nmsg.payload = msg.payload.coolingRate;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 870,
+        "y": 320,
+        "wires": [
+            [
+                "1b810765539a8a5c",
+                "108a725b1713c3b2"
+            ]
+        ]
+    },
+    {
+        "id": "4a7a3db70434caee",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Thermal Efficiency Index",
+        "func": "msg.topic = \"Thermal Efficiency (idx)\";\nmsg.payload = msg.payload.thermalEff;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 890,
+        "y": 360,
+        "wires": [
+            [
+                "dacc60ff5bd6b4ca",
+                "08442d4b820c4cdf"
+            ]
+        ]
+    },
+    {
+        "id": "a1b62af0a03ba388",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ CO2",
+        "func": "msg.topic = \"CO2 (g)\";\nmsg.payload = msg.payload.co2;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 840,
+        "y": 400,
+        "wires": [
+            [
+                "54e82fe951825725",
+                "6619d0f509f768f1"
+            ]
+        ]
+    },
+    {
+        "id": "a8fc5f09494305d2",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Fault Transition Alert",
+        "func": "\nvar state =\n    msg.payload || {};\n\nvar active =\n    state.anomaly === true;\n\nvar previous =\n    context.get(\n        \"previousFaultActive\"\n    );\n\ncontext.set(\n    \"previousFaultActive\",\n    active\n);\n\nvar toast =\n    null;\n\nif (\n    active &&\n    previous !== true\n) {\n    toast = {\n        topic:\n            \"FAULT ACTIVE\",\n\n        payload:\n            state.faultCode +\n            \" — \" +\n            state.faultLabel +\n            \" | severity \" +\n            Number(\n                state.faultSeverity ||\n                0\n            ).toFixed(2)\n    };\n}\n\nreturn [\n    toast,\n    msg\n];\n",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 850,
+        "y": 450,
+        "wires": [
+            [
+                "8bccb4fd52aa88c8"
+            ],
+            [
+                "3eb02296aa5863e3"
+            ]
+        ]
+    },
+    {
+        "id": "8bccb4fd52aa88c8",
+        "type": "ui_toast",
+        "z": "b09dabf0b3dad6af",
+        "position": "top right",
+        "displayTime": "3",
+        "highlight": "red",
+        "sendall": true,
+        "outputs": 0,
+        "ok": "OK",
+        "cancel": "",
+        "raw": true,
+        "className": "",
+        "topic": "ALERT",
+        "name": "Anomaly Alert",
+        "x": 1090,
+        "y": 430,
+        "wires": []
+    },
+    {
+        "id": "3eb02296aa5863e3",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "grp_alerts_ai",
+        "order": 1,
+        "width": 12,
+        "height": 1,
+        "name": "Anomaly Status",
+        "label": "Anomaly",
+        "format": "{{msg.payload.anomaly ? '⚠️ ' + msg.payload.faultCode + ' ACTIVE' : '✅ F0 Healthy'}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1100,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "ca8f0f4b170db1c9",
+        "type": "ui_gauge",
+        "z": "b09dabf0b3dad6af",
+        "name": "Temperature Gauge",
+        "group": "grp_overview_ai",
+        "order": 1,
+        "width": 3,
+        "height": 3,
+        "gtype": "gage",
+        "title": "Temperature (°C)",
+        "label": "°C",
+        "format": "{{value | number:2}}",
+        "min": 0,
+        "max": 60,
+        "colors": [
+            "#00bfff",
+            "#00ff00",
+            "#ff0000"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1110,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "7274a267aef8d7e4",
+        "type": "ui_gauge",
+        "z": "b09dabf0b3dad6af",
+        "name": "RPM Gauge",
+        "group": "grp_overview_ai",
+        "order": 4,
+        "width": 3,
+        "height": 3,
+        "gtype": "gage",
+        "title": "Fan Speed (RPM)",
+        "label": "rpm",
+        "format": "{{value | number:0}}",
+        "min": 0,
+        "max": 3200,
+        "colors": [
+            "#0033cc",
+            "#33cc33",
+            "#ff0000"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1110,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "05f22748182ef261",
+        "type": "ui_gauge",
+        "z": "b09dabf0b3dad6af",
+        "name": "Current Gauge",
+        "group": "grp_overview_ai",
+        "order": 2,
+        "width": 3,
+        "height": 3,
+        "gtype": "gage",
+        "title": "Motor Current (A)",
+        "label": "A",
+        "format": "{{value | number:3}}",
+        "min": 0,
+        "max": 2,
+        "colors": [
+            "#0066ff",
+            "#00cc44",
+            "#ff3300"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1110,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "4a0900c1f57ab291",
+        "type": "ui_gauge",
+        "z": "b09dabf0b3dad6af",
+        "name": "Vibration Gauge",
+        "group": "grp_overview_ai",
+        "order": 3,
+        "width": 3,
+        "height": 3,
+        "gtype": "gage",
+        "title": "Vibration (g RMS)",
+        "label": "g",
+        "format": "{{value | number:3}}",
+        "min": 0,
+        "max": 0.15,
+        "colors": [
+            "#00c0ff",
+            "#00e676",
+            "#ff3d00"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1110,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "764fcb76c4061bda",
+        "type": "ui_gauge",
+        "z": "b09dabf0b3dad6af",
+        "name": "Power Gauge",
+        "group": "grp_overview_ai",
+        "order": 5,
+        "width": 3,
+        "height": 3,
+        "gtype": "gage",
+        "title": "Power (W)",
+        "label": "W",
+        "format": "{{value | number:1}}",
+        "min": 0,
+        "max": 400,
+        "colors": [
+            "#00c0ff",
+            "#00e676",
+            "#ff3d00"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1110,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "43211e862ccf6cb4",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "Temperature Trend",
+        "group": "grp_trends_ai",
+        "order": 1,
+        "width": 6,
+        "height": 5,
+        "label": "Temperature (°C)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "60",
+        "removeOlder": "1",
+        "removeOlderPoints": "500",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#00bcd4"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1350,
+        "y": 80,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "2d4c7719c354d48f",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "RPM Trend",
+        "group": "grp_trends_ai",
+        "order": 4,
+        "width": 6,
+        "height": 5,
+        "label": "Fan Speed (RPM)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "3200",
+        "removeOlder": "1",
+        "removeOlderPoints": "500",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#ffb300"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1350,
+        "y": 120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "b417917bcf11b268",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "Current Trend",
+        "group": "grp_trends_ai",
+        "order": 2,
+        "width": 6,
+        "height": 5,
+        "label": "Motor Current (A)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "2",
+        "removeOlder": "1",
+        "removeOlderPoints": "500",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#4caf50"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1350,
+        "y": 160,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "e9323f3e9d031947",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "Vibration Trend",
+        "group": "grp_trends_ai",
+        "order": 3,
+        "width": 6,
+        "height": 5,
+        "label": "Vibration (g RMS)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "0.15",
+        "removeOlder": "1",
+        "removeOlderPoints": "500",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#e91e63"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1350,
+        "y": 200,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "8193ebedcf91eb75",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "Power Trend",
+        "group": "grp_trends_ai",
+        "order": 5,
+        "width": 6,
+        "height": 5,
+        "label": "Power (W)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "400",
+        "removeOlder": "1",
+        "removeOlderPoints": "500",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#00e676"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1350,
+        "y": 240,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "cd43b63cc2719721",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "Energy Trend",
+        "group": "grp_energy_ai",
+        "order": 3,
+        "width": 6,
+        "height": 5,
+        "label": "Energy (Wh, cumulative)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "",
+        "removeOlder": "1",
+        "removeOlderPoints": "1000",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#607d8b"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1350,
+        "y": 320,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "108a725b1713c3b2",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "Cooling Rate Trend",
+        "group": "grp_trends_ai",
+        "order": 6,
+        "width": 6,
+        "height": 5,
+        "label": "Cooling Rate (°C/s)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "",
+        "ymax": "",
+        "removeOlder": "1",
+        "removeOlderPoints": "500",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#9c27b0"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1350,
+        "y": 280,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "08442d4b820c4cdf",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "Thermal Efficiency Index",
+        "group": "grp_energy_ai",
+        "order": 4,
+        "width": 6,
+        "height": 5,
+        "label": "Thermal Efficiency (Index)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "",
+        "removeOlder": "1",
+        "removeOlderPoints": "1000",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#8bc34a"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1350,
+        "y": 360,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "6619d0f509f768f1",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "CO2 Emissions Trend",
+        "group": "grp_energy_ai",
+        "order": 5,
+        "width": 6,
+        "height": 5,
+        "label": "CO2 (g, cumulative)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "",
+        "removeOlder": "1",
+        "removeOlderPoints": "1000",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#ff5252"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1350,
+        "y": 400,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "1b810765539a8a5c",
+        "type": "ui_gauge",
+        "z": "b09dabf0b3dad6af",
+        "name": "Cooling Rate Gauge",
+        "group": "grp_energy_ai",
+        "order": 6,
+        "width": 3,
+        "height": 3,
+        "gtype": "gage",
+        "title": "Cooling Rate (°C/s)",
+        "label": "°C/s",
+        "format": "{{value | number:4}}",
+        "min": -0.5,
+        "max": 0.5,
+        "colors": [
+            "#ff7043",
+            "#8bc34a",
+            "#ff7043"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1110,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "dacc60ff5bd6b4ca",
+        "type": "ui_gauge",
+        "z": "b09dabf0b3dad6af",
+        "name": "Thermal Efficiency Gauge",
+        "group": "grp_energy_ai",
+        "order": 7,
+        "width": 3,
+        "height": 3,
+        "gtype": "gage",
+        "title": "Thermal Eff. (idx)",
+        "label": "idx",
+        "format": "{{value | number:1}}",
+        "min": 0,
+        "max": 120,
+        "colors": [
+            "#f44336",
+            "#ffeb3b",
+            "#4caf50"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1110,
+        "y": 360,
+        "wires": []
+    },
+    {
+        "id": "c665bc5ab9583d9e",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "d": true,
+        "group": "grp_energy_ai",
+        "order": 6,
+        "width": 3,
+        "height": 1,
+        "name": "Energy (Wh) Text",
+        "label": "Energy (Wh)",
+        "format": "{{msg.payload | number:3}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 1330,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "54e82fe951825725",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "d": true,
+        "group": "grp_energy_ai",
+        "order": 7,
+        "width": 3,
+        "height": 1,
+        "name": "CO2 (g) Text",
+        "label": "CO2 (g)",
+        "format": "{{msg.payload | number:2}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "x": 1310,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "d6ce2449902987ce",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Prepare AI Payload",
+        "func": "var d = msg.data || msg.payload || {};\n\nmsg.headers = { \"Content-Type\": \"application/json\" };\n\nmsg.payload = {\n    temp: Number(d.temp),\n    rpm: Number(d.rpm),\n    current: Number(d.current),\n    vibration: Number(d.vibration),\n    power: Number(d.power),\n    energy: Number(d.energy),\n    coolingRate: Number(d.coolingRate),\n    thermalEff: Number(d.thermalEff),\n    co2: Number(d.co2)\n};\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 560,
+        "y": 540,
+        "wires": [
+            [
+                "d0ff0790cb3915fa"
+            ]
+        ]
+    },
+    {
+        "id": "d0ff0790cb3915fa",
+        "type": "http request",
+        "z": "b09dabf0b3dad6af",
+        "name": "Call AI API",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "http://127.0.0.1:8000/score",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 790,
+        "y": 580,
+        "wires": [
+            [
+                "9fc40c8b70470e07"
+            ]
+        ]
+    },
+    {
+        "id": "9fc40c8b70470e07",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Attach AI Result",
+        "func": "\nvar ai = msg.payload || {};\nvar processState = msg.data || {};\n\nvar storedAI = {\n    fault_code:\n        ai.fault_code,\n\n    fault_label:\n        ai.fault_label,\n\n    confidence:\n        ai.confidence,\n\n    severity:\n        ai.severity,\n\n    advice:\n        ai.advice,\n\n    received_at_ms:\n        Date.now()\n};\n\nflow.set(\n    \"latestAI\",\n    storedAI\n);\n\nmsg.ai = ai;\nmsg.payload = processState;\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 990,
+        "y": 540,
+        "wires": [
+            [
+                "42e151d7d0d13850",
+                "17f5b37044769c85",
+                "78c7a324a5fde762",
+                "4edfd4f0e787e14d",
+                "feade375d5af6936"
+            ]
+        ]
+    },
+    {
+        "id": "42e151d7d0d13850",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Fault Label",
+        "func": "var ai = msg.ai || {};\nmsg.payload = ai.fault_label || \"Unknown\";\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1260,
+        "y": 520,
+        "wires": [
+            [
+                "7b7a3a8a4d2b7ebd"
+            ]
+        ]
+    },
+    {
+        "id": "17f5b37044769c85",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Confidence (%)",
+        "func": "var ai = msg.ai || {};\nvar conf = 0;\nif (ai.confidence !== undefined && ai.confidence !== null) {\n    conf = Number(ai.confidence) * 100;\n}\nmsg.payload = conf;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1270,
+        "y": 560,
+        "wires": [
+            [
+                "02f40ad029de75bd"
+            ]
+        ]
+    },
+    {
+        "id": "78c7a324a5fde762",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Fault Code Timeline",
+        "func": "var ai = msg.ai || {};\nmsg.topic = \"Fault Code\";\nvar fc = (ai.fault_code !== undefined && ai.fault_code !== null) ? ai.fault_code : 0;\nmsg.payload = Number(fc);\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1290,
+        "y": 600,
+        "wires": [
+            [
+                "465df49a44bd1ad6"
+            ]
+        ]
+    },
+    {
+        "id": "4edfd4f0e787e14d",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "→ Maintenance Advice",
+        "func": "var ai = msg.ai || {};\nmsg.payload = ai.advice || \"AI maintenance recommendation will appear here once the trained model is deployed.\";\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1290,
+        "y": 640,
+        "wires": [
+            [
+                "032ef45809b7c5a5"
+            ]
+        ]
+    },
+    {
+        "id": "7b7a3a8a4d2b7ebd",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "grp_ai_ai",
+        "order": 1,
+        "width": 12,
+        "height": 1,
+        "name": "Fault Classification",
+        "label": "Fault Class",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1530,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "02f40ad029de75bd",
+        "type": "ui_gauge",
+        "z": "b09dabf0b3dad6af",
+        "name": "AI Confidence Gauge",
+        "group": "grp_ai_ai",
+        "order": 2,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "AI Confidence",
+        "label": "%",
+        "format": "{{value | number:1}}",
+        "min": 0,
+        "max": 100,
+        "colors": [
+            "#f44336",
+            "#ffeb3b",
+            "#4caf50"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1540,
+        "y": 560,
+        "wires": []
+    },
+    {
+        "id": "465df49a44bd1ad6",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "Fault Timeline",
+        "group": "grp_ai_ai",
+        "order": 3,
+        "width": 12,
+        "height": 5,
+        "label": "Fault Timeline (Code vs Time)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "step",
+        "nodata": "",
+        "dot": false,
+        "ymin": "-0.5",
+        "ymax": "4.5",
+        "removeOlder": "1",
+        "removeOlderPoints": "500",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": true,
+        "useUTC": false,
+        "colors": [
+            "#ff5722"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1550,
+        "y": 600,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "032ef45809b7c5a5",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "grp_ai_ai",
+        "order": 4,
+        "width": 12,
+        "height": 2,
+        "name": "AI Maintenance Recommendation",
+        "label": "AI Recommendation",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1570,
+        "y": 640,
+        "wires": []
+    },
+    {
+        "id": "dfe0d3441617ebce",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Managed Experiment CSV",
+        "func": "\nvar state =\n    msg.payload || {};\n\nif (\n    flow.get(\n        \"loggingActive\"\n    ) !== true\n) {\n    return null;\n}\n\nvar now =\n    Date.now();\n\nvar start =\n    Number(\n        flow.get(\n            \"logStartMs\"\n        ) || 0\n    );\n\nvar runId =\n    flow.get(\n        \"logRunId\"\n    );\n\nif (\n    !start ||\n    !runId\n) {\n    return null;\n}\n\nvar MAX_WINDOW_MS =\n    10 *\n    60 *\n    1000;\n\nvar elapsedMs =\n    now -\n    start;\n\nif (\n    elapsedMs >=\n    MAX_WINDOW_MS\n) {\n    flow.set(\n        \"loggingActive\",\n        false\n    );\n\n    return null;\n}\n\nvar ai =\n    flow.get(\n        \"latestAI\"\n    ) || {};\n\nvar aiAgeMs =\n    ai.received_at_ms\n        ? now -\n          ai.received_at_ms\n        : null;\n\nif (\n    aiAgeMs === null ||\n    aiAgeMs > 5000\n) {\n    ai = {};\n}\n\nfunction valueOrBlank(\n    value\n) {\n    if (\n        value === undefined ||\n        value === null ||\n        Number.isNaN(value)\n    ) {\n        return \"\";\n    }\n\n    return value;\n}\n\nvar phase =\n    flow.get(\n        \"experimentPhase\"\n    ) || \"UNKNOWN\";\n\nvar selectedFaultCode =\n    flow.get(\n        \"selectedFaultCode\"\n    ) || \"F0\";\n\nvar selectedFaultSeverity =\n    Number(\n        flow.get(\n            \"selectedFaultSeverity\"\n        ) || 0\n    );\n\nvar replicate =\n    Number(\n        flow.get(\n            \"selectedReplicate\"\n        ) || 1\n    );\n\nvar record = {\n    ts_iso:\n        new Date(\n            state.ts ||\n            now\n        ).toISOString(),\n\n    ts_ms:\n        state.ts ||\n        now,\n\n    run_id:\n        runId,\n\n    replicate:\n        replicate,\n\n    experiment_elapsed_s:\n        Number(\n            (\n                elapsedMs /\n                1000\n            ).toFixed(3)\n        ),\n\n    experiment_phase:\n        phase,\n\n    selected_fault_code:\n        selectedFaultCode,\n\n    selected_fault_severity:\n        selectedFaultSeverity,\n\n    asset_id:\n        state.assetId ||\n        \"\",\n\n    schema_version:\n        state.schemaVersion ||\n        \"\",\n\n    model_version:\n        state.modelVersion ||\n        \"\",\n\n    sequence_id:\n        valueOrBlank(\n            state.sequenceId\n        ),\n\n    sequence_gap:\n        valueOrBlank(\n            state.sequenceGap\n        ),\n\n    stream_status:\n        state.streamStatus ||\n        \"\",\n\n    synchronisation_status:\n        state\n            .synchronisationStatus ||\n        \"\",\n\n    control_mode:\n        state.controlMode ||\n        \"\",\n\n    operating_mode:\n        state.operatingMode ||\n        \"\",\n\n    speed_command_pct:\n        valueOrBlank(\n            state.speedCommandPct\n        ),\n\n    target_rpm:\n        valueOrBlank(\n            state.targetRpm\n        ),\n\n    actual_rpm:\n        valueOrBlank(\n            state.rpm\n        ),\n\n    speed_error_rpm:\n        valueOrBlank(\n            state.speedErrorRpm\n        ),\n\n    process_heat_load_w:\n        valueOrBlank(\n            state.processHeatLoadW\n        ),\n\n    effective_process_heat_load_w:\n        valueOrBlank(\n            state\n                .effectiveProcessHeatLoadW\n        ),\n\n    mechanical_load:\n        valueOrBlank(\n            state.mechanicalLoad\n        ),\n\n    effective_mechanical_load:\n        valueOrBlank(\n            state\n                .effectiveMechanicalLoad\n        ),\n\n    ambient_temperature_c:\n        valueOrBlank(\n            state\n                .ambientTemperatureC\n        ),\n\n    temperature_c:\n        valueOrBlank(\n            state.temp\n        ),\n\n    current_a:\n        valueOrBlank(\n            state.current\n        ),\n\n    current_multiplier:\n        valueOrBlank(\n            state.currentMultiplier\n        ),\n\n    vibration_g:\n        valueOrBlank(\n            state.vibration\n        ),\n\n    vibration_offset_g:\n        valueOrBlank(\n            state.vibrationOffsetG\n        ),\n\n    power_w:\n        valueOrBlank(\n            state.power\n        ),\n\n    energy_wh:\n        valueOrBlank(\n            state.energy\n        ),\n\n    cooling_rate_c_per_s:\n        valueOrBlank(\n            state.coolingRate\n        ),\n\n    cooling_efficiency:\n        valueOrBlank(\n            state.coolingEfficiency\n        ),\n\n    thermal_resistance_c_per_w:\n        valueOrBlank(\n            state.thermalResistance\n        ),\n\n    legacy_thermal_eff_index:\n        valueOrBlank(\n            state.thermalEff\n        ),\n\n    co2_g:\n        valueOrBlank(\n            state.co2\n        ),\n\n    health_overall:\n        valueOrBlank(\n            state.healthOverall\n        ),\n\n    health_status:\n        state.healthStatus ||\n        \"\",\n\n    embedded_fault_code:\n        state.faultCode ||\n        \"\",\n\n    embedded_fault_class_id:\n        valueOrBlank(\n            state.faultClassId\n        ),\n\n    embedded_fault_binary_label:\n        valueOrBlank(\n            state.faultBinaryLabel\n        ),\n\n    embedded_fault_label:\n        state.faultLabel ||\n        \"\",\n\n    embedded_fault_severity:\n        valueOrBlank(\n            state.faultSeverity\n        ),\n\n    embedded_fault_active:\n        state.faultActive === true\n            ? 1\n            : 0,\n\n    anomaly:\n        state.anomaly === true\n            ? 1\n            : 0,\n\n    ai_fault_code:\n        valueOrBlank(\n            ai.fault_code\n        ),\n\n    ai_fault_label:\n        ai.fault_label ||\n        \"\",\n\n    ai_confidence:\n        valueOrBlank(\n            ai.confidence\n        ),\n\n    ai_severity:\n        ai.severity ||\n        \"\",\n\n    accepted_commands:\n        valueOrBlank(\n            state.acceptedCommands\n        ),\n\n    rejected_commands:\n        valueOrBlank(\n            state.rejectedCommands\n        )\n};\n\nvar columns =\n    Object.keys(record);\n\nfunction escapeCsv(\n    value\n) {\n    var text =\n        value === undefined ||\n        value === null\n            ? \"\"\n            : String(value);\n\n    if (\n        text.includes(\",\") ||\n        text.includes(\"\\\"\") ||\n        text.includes(\"\\n\") ||\n        text.includes(\"\\r\")\n    ) {\n        return \"\\\"\" +\n            text.replace(\n                /\"/g,\n                \"\\\"\\\"\"\n            ) +\n            \"\\\"\";\n    }\n\n    return text;\n}\n\nvar headerKey =\n    \"csvHeaderWritten:\" +\n    runId;\n\nvar headerWritten =\n    flow.get(\n        headerKey\n    ) === true;\n\nvar row =\n    columns\n        .map(\n            function(column) {\n                return escapeCsv(\n                    record[column]\n                );\n            }\n        )\n        .join(\",\");\n\nvar content = \"\";\n\nif (!headerWritten) {\n    content +=\n        columns.join(\",\") +\n        \"\\n\";\n\n    flow.set(\n        headerKey,\n        true\n    );\n}\n\ncontent +=\n    row +\n    \"\\n\";\n\nmsg.filename =\n    \"C:\\\\ProjectFiles\\\\Digital_Twin_MQTT\\\\data\\\\V3\\\\\" +\n    runId +\n    \".csv\";\n\nmsg.payload =\n    content;\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 610,
+        "y": 720,
+        "wires": [
+            [
+                "1cbe42ab32fd22ff"
+            ]
+        ]
+    },
+    {
+        "id": "1cbe42ab32fd22ff",
+        "type": "file",
+        "z": "b09dabf0b3dad6af",
+        "name": "Save Experiment CSV",
+        "filename": "",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 1100,
+        "y": 720,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "30cc7d8c71a1b774",
+        "type": "comment",
+        "z": "b09dabf0b3dad6af",
+        "name": "SUPERVISORY CONTROL",
+        "info": "Validated dashboard commands are published to factory/fan/command.",
+        "x": 210,
+        "y": 820,
+        "wires": []
+    },
+    {
+        "id": "623bf196388c17d3",
+        "type": "comment",
+        "z": "b09dabf0b3dad6af",
+        "name": "CLOSED-LOOP VERIFICATION",
+        "info": "Command counters returned by the Arduino are used as telemetry acknowledgements.",
+        "x": 830,
+        "y": 820,
+        "wires": []
+    },
+    {
+        "id": "3c0cf6189f3f86ac",
+        "type": "ui_dropdown",
+        "z": "b09dabf0b3dad6af",
+        "name": "Control Mode Selector",
+        "label": "Control Mode",
+        "tooltip": "",
+        "place": "Select mode",
+        "group": "076009a625ed05be",
+        "order": 1,
+        "width": 4,
+        "height": 1,
+        "passthru": true,
+        "multiple": false,
+        "options": [
+            {
+                "label": "Automatic",
+                "value": "AUTOMATIC",
+                "type": "str"
+            },
+            {
+                "label": "Manual",
+                "value": "MANUAL",
+                "type": "str"
+            }
+        ],
+        "payload": "",
+        "topic": "control_mode",
+        "topicType": "str",
+        "className": "",
+        "x": 180,
+        "y": 880,
+        "wires": [
+            [
+                "92e032e00651673e"
+            ]
+        ]
+    },
+    {
+        "id": "a83e17b384013a19",
+        "type": "ui_slider",
+        "z": "b09dabf0b3dad6af",
+        "name": "Speed Command Slider",
+        "label": "Speed Command",
+        "tooltip": "",
+        "group": "076009a625ed05be",
+        "order": 2,
+        "width": 4,
+        "height": 1,
+        "passthru": true,
+        "outs": "end",
+        "topic": "speed_command_pct",
+        "topicType": "str",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "className": "",
+        "x": 180,
+        "y": 920,
+        "wires": [
+            [
+                "92e032e00651673e"
+            ]
+        ]
+    },
+    {
+        "id": "00194ef905460f3f",
+        "type": "ui_slider",
+        "z": "b09dabf0b3dad6af",
+        "name": "Process Heat Load Slider",
+        "label": "Process Heat Load (W)",
+        "tooltip": "",
+        "group": "076009a625ed05be",
+        "order": 3,
+        "width": 4,
+        "height": 1,
+        "passthru": true,
+        "outs": "end",
+        "topic": "process_heat_load_w",
+        "topicType": "str",
+        "min": 0,
+        "max": 500,
+        "step": 5,
+        "className": "",
+        "x": 190,
+        "y": 960,
+        "wires": [
+            [
+                "92e032e00651673e"
+            ]
+        ]
+    },
+    {
+        "id": "0a8ac6bc5b87a9e6",
+        "type": "ui_slider",
+        "z": "b09dabf0b3dad6af",
+        "name": "Mechanical Load Slider",
+        "label": "Mechanical Load",
+        "tooltip": "",
+        "group": "076009a625ed05be",
+        "order": 4,
+        "width": 4,
+        "height": 1,
+        "passthru": true,
+        "outs": "end",
+        "topic": "mechanical_load",
+        "topicType": "str",
+        "min": 0,
+        "max": 1,
+        "step": 0.01,
+        "className": "",
+        "x": 190,
+        "y": 1000,
+        "wires": [
+            [
+                "92e032e00651673e"
+            ]
+        ]
+    },
+    {
+        "id": "92e032e00651673e",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Store Pending Set-points",
+        "func": "\nvar pending =\n    flow.get(\"pendingControl\") || {\n        control_mode: \"MANUAL\",\n        speed_command_pct: 65,\n        process_heat_load_w: 145,\n        mechanical_load: 0.30\n    };\n\nif (msg.topic === \"control_mode\") {\n    pending.control_mode =\n        String(msg.payload);\n}\n\nif (msg.topic === \"speed_command_pct\") {\n    pending.speed_command_pct =\n        Number(msg.payload);\n}\n\nif (msg.topic === \"process_heat_load_w\") {\n    pending.process_heat_load_w =\n        Number(msg.payload);\n}\n\nif (msg.topic === \"mechanical_load\") {\n    pending.mechanical_load =\n        Number(msg.payload);\n}\n\nflow.set(\n    \"pendingControl\",\n    pending\n);\n\nmsg.payload = pending;\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 460,
+        "y": 940,
+        "wires": [
+            [
+                "95f294a5c8aa3691"
+            ]
+        ]
+    },
+    {
+        "id": "95f294a5c8aa3691",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "076009a625ed05be",
+        "order": 5,
+        "width": 8,
+        "height": 1,
+        "name": "Pending Set-points",
+        "label": "Pending Command",
+        "format": "{{msg.payload.control_mode}} | Speed {{msg.payload.speed_command_pct}}% | Heat {{msg.payload.process_heat_load_w}} W | Load {{msg.payload.mechanical_load | number:2}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 720,
+        "y": 940,
+        "wires": []
+    },
+    {
+        "id": "1329b8cb638fe755",
+        "type": "ui_button",
+        "z": "b09dabf0b3dad6af",
+        "name": "Apply Set-points",
+        "group": "076009a625ed05be",
+        "order": 6,
+        "width": 4,
+        "height": 1,
+        "passthru": false,
+        "label": "APPLY SET-POINTS",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "send",
+        "payload": "apply",
+        "payloadType": "str",
+        "topic": "apply",
+        "topicType": "str",
+        "x": 180,
+        "y": 1060,
+        "wires": [
+            [
+                "f58e53f21b9725b6"
+            ]
+        ]
+    },
+    {
+        "id": "3d2f1a8ac371d9b0",
+        "type": "ui_button",
+        "z": "b09dabf0b3dad6af",
+        "name": "Automatic Profile",
+        "group": "076009a625ed05be",
+        "order": 7,
+        "width": 3,
+        "height": 1,
+        "passthru": false,
+        "label": "AUTOMATIC",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "autorenew",
+        "payload": "{\"automatic\":true}",
+        "payloadType": "json",
+        "topic": "preset",
+        "topicType": "str",
+        "x": 170,
+        "y": 1100,
+        "wires": [
+            [
+                "e46009338eeb8adb"
+            ]
+        ]
+    },
+    {
+        "id": "6958998267f77858",
+        "type": "ui_button",
+        "z": "b09dabf0b3dad6af",
+        "name": "Normal Preset",
+        "group": "076009a625ed05be",
+        "order": 8,
+        "width": 3,
+        "height": 1,
+        "passthru": false,
+        "label": "NORMAL",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "speed",
+        "payload": "{\"control_mode\":\"MANUAL\",\"speed_command_pct\":65,\"process_heat_load_w\":145,\"mechanical_load\":0.3}",
+        "payloadType": "json",
+        "topic": "preset",
+        "topicType": "str",
+        "x": 170,
+        "y": 1140,
+        "wires": [
+            [
+                "e46009338eeb8adb"
+            ]
+        ]
+    },
+    {
+        "id": "e81f2c093c568b77",
+        "type": "ui_button",
+        "z": "b09dabf0b3dad6af",
+        "name": "High Load Preset",
+        "group": "076009a625ed05be",
+        "order": 9,
+        "width": 3,
+        "height": 1,
+        "passthru": false,
+        "label": "HIGH LOAD",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "whatshot",
+        "payload": "{\"control_mode\":\"MANUAL\",\"speed_command_pct\":90,\"process_heat_load_w\":245,\"mechanical_load\":0.62}",
+        "payloadType": "json",
+        "topic": "preset",
+        "topicType": "str",
+        "x": 170,
+        "y": 1180,
+        "wires": [
+            [
+                "e46009338eeb8adb"
+            ]
+        ]
+    },
+    {
+        "id": "0163f90f74815e55",
+        "type": "ui_button",
+        "z": "b09dabf0b3dad6af",
+        "name": "Fan Off Preset",
+        "group": "076009a625ed05be",
+        "order": 10,
+        "width": 3,
+        "height": 1,
+        "passthru": false,
+        "label": "FAN OFF",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "power_settings_new",
+        "payload": "{\"control_mode\":\"MANUAL\",\"speed_command_pct\":0,\"process_heat_load_w\":70,\"mechanical_load\":0.05}",
+        "payloadType": "json",
+        "topic": "preset",
+        "topicType": "str",
+        "x": 170,
+        "y": 1220,
+        "wires": [
+            [
+                "e46009338eeb8adb"
+            ]
+        ]
+    },
+    {
+        "id": "f58e53f21b9725b6",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Validate Pending Command",
+        "func": "\nvar pending =\n    flow.get(\"pendingControl\") || {\n        control_mode: \"MANUAL\",\n        speed_command_pct: 65,\n        process_heat_load_w: 145,\n        mechanical_load: 0.30\n    };\n\nfunction validNumber(value, minimum, maximum) {\n    var numericValue = Number(value);\n\n    return (\n        Number.isFinite(numericValue) &&\n        numericValue >= minimum &&\n        numericValue <= maximum\n    );\n}\n\nif (pending.control_mode === \"AUTOMATIC\") {\n    msg.payload = {\n        automatic: true\n    };\n\n    return msg;\n}\n\nif (\n    pending.control_mode !== \"MANUAL\" ||\n    !validNumber(\n        pending.speed_command_pct,\n        0,\n        100\n    ) ||\n    !validNumber(\n        pending.process_heat_load_w,\n        0,\n        500\n    ) ||\n    !validNumber(\n        pending.mechanical_load,\n        0,\n        1\n    )\n) {\n    node.error(\n        \"Supervisory command failed validation\",\n        msg\n    );\n\n    return null;\n}\n\nmsg.payload = {\n    control_mode: \"MANUAL\",\n    speed_command_pct:\n        Number(\n            pending.speed_command_pct\n        ),\n    process_heat_load_w:\n        Number(\n            pending.process_heat_load_w\n        ),\n    mechanical_load:\n        Number(\n            pending.mechanical_load\n        )\n};\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 450,
+        "y": 1060,
+        "wires": [
+            [
+                "e46009338eeb8adb"
+            ]
+        ]
+    },
+    {
+        "id": "e46009338eeb8adb",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Register Command Dispatch",
+        "func": "\nvar command = msg.payload;\n\nif (typeof command === \"string\") {\n    try {\n        command = JSON.parse(command);\n    } catch (error) {\n        node.error(\n            \"Invalid command JSON\",\n            msg\n        );\n\n        return null;\n    }\n}\n\nvar state =\n    flow.get(\"latestTwinState\") || {};\n\nvar dispatch = {\n    dispatchTimeMs:\n        Date.now(),\n\n    acceptedBefore:\n        Number(\n            state.acceptedCommands || 0\n        ),\n\n    rejectedBefore:\n        Number(\n            state.rejectedCommands || 0\n        ),\n\n    command:\n        command\n};\n\nflow.set(\n    \"lastCommandDispatch\",\n    dispatch\n);\n\nmsg.topic =\n    \"factory/fan/command\";\n\nmsg.payload =\n    JSON.stringify(command);\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 720,
+        "y": 1080,
+        "wires": [
+            [
+                "3a153d8a52a5b92a",
+                "92f3f7124c23a46d",
+                "322947b9029c7d81"
+            ]
+        ]
+    },
+    {
+        "id": "3a153d8a52a5b92a",
+        "type": "mqtt out",
+        "z": "b09dabf0b3dad6af",
+        "name": "Publish Fan Command",
+        "topic": "factory/fan/command",
+        "qos": "0",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "application/json",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "mqtt_broker_ai",
+        "x": 1000,
+        "y": 1060,
+        "wires": []
+    },
+    {
+        "id": "92f3f7124c23a46d",
+        "type": "debug",
+        "z": "b09dabf0b3dad6af",
+        "name": "Supervisory Command",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1000,
+        "y": 1100,
+        "wires": []
+    },
+    {
+        "id": "322947b9029c7d81",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "0d202150326f8b50",
+        "order": 9,
+        "width": 12,
+        "height": 1,
+        "name": "Last Command",
+        "label": "Last Command Sent",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1000,
+        "y": 1140,
+        "wires": []
+    },
+    {
+        "id": "e09c55bc0ce4e0cf",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Closed-Loop Verification",
+        "func": "\nvar state = msg.payload || {};\n\nvar dispatch =\n    flow.get(\"lastCommandDispatch\");\n\nvar acknowledgement =\n    flow.get(\"lastAcknowledgement\") || {\n        status: \"NO COMMAND\",\n        responseTimeMs: null\n    };\n\nif (dispatch) {\n    if (\n        Number(state.acceptedCommands) >\n        Number(dispatch.acceptedBefore)\n    ) {\n        acknowledgement = {\n            status: \"ACCEPTED\",\n            responseTimeMs:\n                Date.now() -\n                dispatch.dispatchTimeMs\n        };\n\n        flow.set(\n            \"lastAcknowledgement\",\n            acknowledgement\n        );\n\n        flow.set(\n            \"lastCommandDispatch\",\n            null\n        );\n\n    } else if (\n        Number(state.rejectedCommands) >\n        Number(dispatch.rejectedBefore)\n    ) {\n        acknowledgement = {\n            status: \"REJECTED\",\n            responseTimeMs:\n                Date.now() -\n                dispatch.dispatchTimeMs\n        };\n\n        flow.set(\n            \"lastAcknowledgement\",\n            acknowledgement\n        );\n\n        flow.set(\n            \"lastCommandDispatch\",\n            null\n        );\n\n    } else {\n        acknowledgement = {\n            status: \"AWAITING RESPONSE\",\n            responseTimeMs:\n                Date.now() -\n                dispatch.dispatchTimeMs\n        };\n    }\n}\n\nreturn [\n    {\n        payload:\n            state.controlMode\n    },\n    {\n        payload:\n            state.operatingMode\n    },\n    {\n        payload:\n            state.speedCommandPct\n    },\n    {\n        payload:\n            state.targetRpm\n    },\n    {\n        payload:\n            state.rpm\n    },\n    {\n        payload:\n            acknowledgement.status\n    },\n    {\n        payload:\n            acknowledgement.responseTimeMs === null\n                ? \"—\"\n                : acknowledgement.responseTimeMs\n    },\n    {\n        payload:\n            state.acceptedCommands +\n            \" accepted / \" +\n            state.rejectedCommands +\n            \" rejected\"\n    },\n    {\n        payload:\n            state.healthStatus +\n            \" | \" +\n            state.faultCode\n    }\n];\n",
+        "outputs": 9,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 820,
+        "y": 880,
+        "wires": [
+            [
+                "f516e435c346d3a8"
+            ],
+            [
+                "48024ce38426c2fd"
+            ],
+            [
+                "9a6e6d84a3daed87"
+            ],
+            [
+                "6c2e2f75f52ecbce"
+            ],
+            [
+                "83ce1461dad90ede"
+            ],
+            [
+                "b71c73b4d50f0e72"
+            ],
+            [
+                "105fb28130cf8e52"
+            ],
+            [
+                "a9b1b2998bab1863"
+            ],
+            [
+                "627787481ebcfe3c"
+            ]
+        ]
+    },
+    {
+        "id": "f516e435c346d3a8",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "0d202150326f8b50",
+        "order": 1,
+        "width": 3,
+        "height": 1,
+        "name": "Current Control Mode",
+        "label": "Control Mode",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1110,
+        "y": 840,
+        "wires": []
+    },
+    {
+        "id": "48024ce38426c2fd",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "0d202150326f8b50",
+        "order": 2,
+        "width": 3,
+        "height": 1,
+        "name": "Current Operating Mode",
+        "label": "Operating Mode",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1120,
+        "y": 880,
+        "wires": []
+    },
+    {
+        "id": "9a6e6d84a3daed87",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "0d202150326f8b50",
+        "order": 3,
+        "width": 3,
+        "height": 1,
+        "name": "Speed Set-point",
+        "label": "Speed Set-point",
+        "format": "{{msg.payload | number:0}} %",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1110,
+        "y": 920,
+        "wires": []
+    },
+    {
+        "id": "83ce1461dad90ede",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "0d202150326f8b50",
+        "order": 5,
+        "width": 3,
+        "height": 1,
+        "name": "Actual RPM",
+        "label": "Actual Speed",
+        "format": "{{msg.payload | number:0}} rpm",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1100,
+        "y": 960,
+        "wires": []
+    },
+    {
+        "id": "b71c73b4d50f0e72",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "0d202150326f8b50",
+        "order": 6,
+        "width": 4,
+        "height": 1,
+        "name": "Acknowledgement Status",
+        "label": "Command Status",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1120,
+        "y": 1000,
+        "wires": []
+    },
+    {
+        "id": "105fb28130cf8e52",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "0d202150326f8b50",
+        "order": 7,
+        "width": 4,
+        "height": 1,
+        "name": "Approximate Response Time",
+        "label": "Approx. Response",
+        "format": "{{msg.payload}} ms",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1140,
+        "y": 1040,
+        "wires": []
+    },
+    {
+        "id": "a9b1b2998bab1863",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "0d202150326f8b50",
+        "order": 8,
+        "width": 4,
+        "height": 1,
+        "name": "Command Counters",
+        "label": "Commands",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1110,
+        "y": 1080,
+        "wires": []
+    },
+    {
+        "id": "627787481ebcfe3c",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "0d202150326f8b50",
+        "order": 10,
+        "width": 12,
+        "height": 1,
+        "name": "Embedded Health Status",
+        "label": "Asset Health",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1120,
+        "y": 1120,
+        "wires": []
+    },
+    {
+        "id": "fdd61485a3fd3e21",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Target vs Actual RPM",
+        "func": "\nvar state = msg.payload || {};\n\nreturn [\n    {\n        topic: \"Target RPM\",\n        payload: Number(\n            state.targetRpm || 0\n        )\n    },\n    {\n        topic: \"Actual RPM\",\n        payload: Number(\n            state.rpm || 0\n        )\n    }\n];\n",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 850,
+        "y": 1220,
+        "wires": [
+            [
+                "8b8eab685bde502e"
+            ],
+            [
+                "8b8eab685bde502e"
+            ]
+        ]
+    },
+    {
+        "id": "8b8eab685bde502e",
+        "type": "ui_chart",
+        "z": "b09dabf0b3dad6af",
+        "name": "Commanded vs Actual Speed",
+        "group": "grp_trends_ai",
+        "order": 7,
+        "width": 12,
+        "height": 5,
+        "label": "Commanded versus Actual Fan Speed",
+        "chartType": "line",
+        "legend": "true",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "3200",
+        "removeOlder": "1",
+        "removeOlderPoints": "500",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#ff9800",
+            "#2196f3",
+            "#9c27b0"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1110,
+        "y": 1220,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "41f190a0e73bd96a",
+        "type": "catch",
+        "z": "b09dabf0b3dad6af",
+        "name": "Catch AI API Error",
+        "scope": [
+            "d0ff0790cb3915fa"
+        ],
+        "uncaught": false,
+        "x": 760,
+        "y": 680,
+        "wires": [
+            [
+                "e2093d826c7cd809"
+            ]
+        ]
+    },
+    {
+        "id": "e2093d826c7cd809",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "AI Service Unavailable",
+        "func": "msg.payload = \"OFFLINE — start serve_model.py; monitoring remains active.\";\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1010,
+        "y": 680,
+        "wires": [
+            [
+                "6ecfde2b7e4e1a28"
+            ]
+        ]
+    },
+    {
+        "id": "6ecfde2b7e4e1a28",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "grp_ai_ai",
+        "order": 5,
+        "width": 12,
+        "height": 1,
+        "name": "AI Service Status",
+        "label": "AI Model Service",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1260,
+        "y": 680,
+        "wires": []
+    },
+    {
+        "id": "6c2fcdc971fc20b8",
+        "type": "ui_button",
+        "z": "b09dabf0b3dad6af",
+        "name": "Start 10-Minute Experiment",
+        "group": "9b761ccab16eab8e",
+        "order": 5,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "label": "START 10-MIN EXPERIMENT",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "fiber_manual_record",
+        "payload": "start",
+        "payloadType": "str",
+        "topic": "logging",
+        "topicType": "str",
+        "x": 250,
+        "y": 1300,
+        "wires": [
+            [
+                "991307ee345f3356"
+            ]
+        ]
+    },
+    {
+        "id": "991307ee345f3356",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Start 10-Minute Experiment",
+        "func": "\nvar config =\n    flow.get(\n        \"experimentConfig\"\n    ) || {\n        fault_code: \"F1\",\n        fault_severity: 0.6,\n        replicate: 1\n    };\n\nvar faultCode =\n    String(\n        config.fault_code ||\n        \"F1\"\n    );\n\nvar severity =\n    Number(\n        config.fault_severity\n    );\n\nvar replicate =\n    Math.max(\n        1,\n        Math.floor(\n            Number(\n                config.replicate\n            ) || 1\n        )\n    );\n\nif (\n    faultCode !== \"F0\" &&\n    (\n        !Number.isFinite(\n            severity\n        ) ||\n        severity <= 0 ||\n        severity > 1\n    )\n) {\n    return [\n        null,\n        {\n            payload:\n                \"ERROR — select severity 0.1–1.0 for \" +\n                faultCode\n        }\n    ];\n}\n\nif (\n    flow.get(\n        \"loggingActive\"\n    ) === true\n) {\n    return [\n        null,\n        {\n            payload:\n                \"RUN ALREADY ACTIVE — stop it before starting another\"\n        }\n    ];\n}\n\nvar now =\n    Date.now();\n\nvar stamp =\n    new Date(now)\n        .toISOString()\n        .replace(\n            /[-:]/g,\n            \"\"\n        )\n        .replace(\n            /\\..+/,\n            \"\"\n        );\n\nvar severityCode =\n    faultCode === \"F0\"\n        ? \"S00\"\n        : \"S\" +\n          String(\n              Math.round(\n                  severity *\n                  10\n              )\n          ).padStart(\n              2,\n              \"0\"\n          );\n\nvar runId =\n    \"FAN_DT_001_\" +\n    faultCode +\n    \"_\" +\n    severityCode +\n    \"_R\" +\n    String(\n        replicate\n    ).padStart(\n        2,\n        \"0\"\n    ) +\n    \"_\" +\n    stamp;\n\nflow.set(\n    \"logStartMs\",\n    now\n);\n\nflow.set(\n    \"logRunId\",\n    runId\n);\n\nflow.set(\n    \"experimentRunId\",\n    runId\n);\n\nflow.set(\n    \"loggingActive\",\n    true\n);\n\nflow.set(\n    \"experimentPhase\",\n    \"BASELINE\"\n);\n\nflow.set(\n    \"selectedFaultCode\",\n    faultCode\n);\n\nflow.set(\n    \"selectedFaultSeverity\",\n    severity\n);\n\nflow.set(\n    \"selectedReplicate\",\n    replicate\n);\n\nflow.set(\n    \"csvHeaderWritten:\" +\n    runId,\n    false\n);\n\nvar oldTimers =\n    context.get(\n        \"experimentTimers\"\n    ) || [];\n\noldTimers.forEach(\n    function(timer) {\n        clearTimeout(timer);\n    }\n);\n\n/*\n  0–60 s:\n  Healthy baseline\n*/\n\nvar baselineTimer =\n    setTimeout(\n        function() {\n            flow.set(\n                \"experimentPhase\",\n                \"FAULT_ACTIVE\"\n            );\n\n            if (\n                faultCode !== \"F0\"\n            ) {\n                node.send([\n                    {\n                        payload: {\n                            fault_code:\n                                faultCode,\n\n                            fault_severity:\n                                severity\n                        }\n                    },\n                    {\n                        payload:\n                            \"FAULT ACTIVE — \" +\n                            faultCode +\n                            \" | severity \" +\n                            severity.toFixed(1)\n                    }\n                ]);\n\n            } else {\n                node.send([\n                    {\n                        payload: {\n                            clear_fault:\n                                true\n                        }\n                    },\n                    {\n                        payload:\n                            \"HEALTHY SCENARIO ACTIVE — F0\"\n                    }\n                ]);\n            }\n        },\n        60 * 1000\n    );\n\n/*\n  540–600 s:\n  Recovery\n*/\n\nvar recoveryTimer =\n    setTimeout(\n        function() {\n            flow.set(\n                \"experimentPhase\",\n                \"RECOVERY\"\n            );\n\n            node.send([\n                {\n                    payload: {\n                        clear_fault:\n                            true\n                    }\n                },\n                {\n                    payload:\n                        \"RECOVERY — fault cleared | 60 s remaining\"\n                }\n            ]);\n        },\n        540 * 1000\n    );\n\n/*\n  Stop at 600 s.\n*/\n\nvar stopTimer =\n    setTimeout(\n        function() {\n            flow.set(\n                \"loggingActive\",\n                false\n            );\n\n            flow.set(\n                \"experimentPhase\",\n                \"COMPLETE\"\n            );\n\n            node.send([\n                {\n                    payload: {\n                        clear_fault:\n                            true\n                    }\n                },\n                {\n                    payload:\n                        \"COMPLETE — 10-minute CSV saved | \" +\n                        runId\n                }\n            ]);\n        },\n        600 * 1000\n    );\n\ncontext.set(\n    \"experimentTimers\",\n    [\n        baselineTimer,\n        recoveryTimer,\n        stopTimer\n    ]\n);\n\n/*\n  Initial command:\n  - clear any previous fault;\n  - reset energy for this run.\n*/\n\nreturn [\n    {\n        payload: {\n            clear_fault:\n                true,\n\n            reset_energy:\n                true\n        }\n    },\n    {\n        payload:\n            \"BASELINE — 60 s | \" +\n            runId\n    }\n];\n",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 500,
+        "y": 1300,
+        "wires": [
+            [
+                "e46009338eeb8adb"
+            ],
+            [
+                "21ae6d90ea485b4b"
+            ]
+        ]
+    },
+    {
+        "id": "21ae6d90ea485b4b",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "9b761ccab16eab8e",
+        "order": 7,
+        "width": 18,
+        "height": 1,
+        "name": "Logging Status",
+        "label": "Experiment Status",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 740,
+        "y": 1300,
+        "wires": []
+    },
+    {
+        "id": "755a01a06dcecc05",
+        "type": "inject",
+        "z": "b09dabf0b3dad6af",
+        "name": "Initialise Supervisory Controls",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 220,
+        "y": 1360,
+        "wires": [
+            [
+                "6f46e783a5aa4682"
+            ]
+        ]
+    },
+    {
+        "id": "6f46e783a5aa4682",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Set Control Defaults",
+        "func": "\nvar pending = {\n    control_mode: \"AUTOMATIC\",\n    speed_command_pct: 65,\n    process_heat_load_w: 145,\n    mechanical_load: 0.30\n};\n\nflow.set(\n    \"pendingControl\",\n    pending\n);\n\nreturn [\n    {\n        payload:\n            pending.control_mode\n    },\n    {\n        payload:\n            pending.speed_command_pct\n    },\n    {\n        payload:\n            pending.process_heat_load_w\n    },\n    {\n        payload:\n            pending.mechanical_load\n    },\n    {\n        payload:\n            pending\n    }\n];\n",
+        "outputs": 5,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 490,
+        "y": 1360,
+        "wires": [
+            [
+                "3c0cf6189f3f86ac"
+            ],
+            [
+                "a83e17b384013a19"
+            ],
+            [
+                "00194ef905460f3f"
+            ],
+            [
+                "0a8ac6bc5b87a9e6"
+            ],
+            [
+                "95f294a5c8aa3691"
+            ]
+        ]
+    },
+    {
+        "id": "d3b68054dc99f442",
+        "type": "ui_template",
+        "z": "b09dabf0b3dad6af",
+        "group": "11dd2b71c21e57ba",
+        "name": "Research Demonstrator Banner",
+        "order": 1,
+        "width": 36,
+        "height": 2,
+        "format": "\n<div style=\"\n    padding:10px 14px;\n    border-left:5px solid #76b947;\n    background:linear-gradient(90deg,#263238,#37474f);\n    color:white;\n\">\n  <div style=\"font-size:22px;font-weight:700;\">\n    SustainTwin Research Demonstrator\n  </div>\n  <div style=\"font-size:13px;opacity:0.88;margin-top:4px;\">\n    Physics-aware digital twin • Controlled fault scenarios •\n    10-minute experiments • Sustainability analytics •\n    AI inference\n  </div>\n</div>\n",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 440,
+        "y": 1480,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "2afe6c134cf59d03",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Digital Twin State Summary",
+        "func": "\nvar state = msg.payload || {};\n\nvar arrivalText =\n    state.interArrivalMs === null\n        ? \"Initialising\"\n        : state.interArrivalMs + \" ms\";\n\nreturn [\n    {\n        payload:\n            state.assetId\n    },\n    {\n        payload:\n            state.modelVersion\n    },\n    {\n        payload:\n            state.schemaVersion\n    },\n    {\n        payload:\n            state.sequenceId\n    },\n    {\n        payload:\n            state.streamStatus +\n            \" | \" +\n            arrivalText\n    },\n    {\n        payload:\n            state.synchronisationStatus\n    },\n    {\n        payload:\n            state.controlMode +\n            \" | \" +\n            state.operatingMode\n    },\n    {\n        payload:\n            state.healthStatus +\n            \" | \" +\n            state.faultCode\n    }\n];\n",
+        "outputs": 8,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 780,
+        "y": 1480,
+        "wires": [
+            [
+                "cfad2f02ae717c36"
+            ],
+            [
+                "5cd5d263523d77ec"
+            ],
+            [
+                "64a7572102a9d0d5"
+            ],
+            [
+                "d127ab61e9320e7d"
+            ],
+            [
+                "b01e099d53344e7e"
+            ],
+            [
+                "2e69bfd118e6fd80"
+            ],
+            [
+                "b2b33ea0e7677069"
+            ],
+            [
+                "7467f6b89eabe6f7"
+            ]
+        ]
+    },
+    {
+        "id": "cfad2f02ae717c36",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "11dd2b71c21e57ba",
+        "order": 2,
+        "width": 6,
+        "height": 1,
+        "name": "Asset ID",
+        "label": "Asset",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1060,
+        "y": 1420,
+        "wires": []
+    },
+    {
+        "id": "5cd5d263523d77ec",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "11dd2b71c21e57ba",
+        "order": 3,
+        "width": 6,
+        "height": 1,
+        "name": "Model Version",
+        "label": "Model",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1060,
+        "y": 1460,
+        "wires": []
+    },
+    {
+        "id": "64a7572102a9d0d5",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "11dd2b71c21e57ba",
+        "order": 4,
+        "width": 6,
+        "height": 1,
+        "name": "Schema Version",
+        "label": "Schema",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1060,
+        "y": 1500,
+        "wires": []
+    },
+    {
+        "id": "d127ab61e9320e7d",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "11dd2b71c21e57ba",
+        "order": 5,
+        "width": 6,
+        "height": 1,
+        "name": "Sequence ID",
+        "label": "Sequence",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1060,
+        "y": 1540,
+        "wires": []
+    },
+    {
+        "id": "b01e099d53344e7e",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "11dd2b71c21e57ba",
+        "order": 6,
+        "width": 6,
+        "height": 1,
+        "name": "Telemetry Stream",
+        "label": "Telemetry",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1320,
+        "y": 1420,
+        "wires": []
+    },
+    {
+        "id": "2e69bfd118e6fd80",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "11dd2b71c21e57ba",
+        "order": 7,
+        "width": 6,
+        "height": 1,
+        "name": "Twin Synchronisation",
+        "label": "Twin Sync",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1320,
+        "y": 1460,
+        "wires": []
+    },
+    {
+        "id": "b2b33ea0e7677069",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "11dd2b71c21e57ba",
+        "order": 8,
+        "width": 6,
+        "height": 1,
+        "name": "Mode Summary",
+        "label": "Control / Operation",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1320,
+        "y": 1500,
+        "wires": []
+    },
+    {
+        "id": "7467f6b89eabe6f7",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "11dd2b71c21e57ba",
+        "order": 9,
+        "width": 6,
+        "height": 1,
+        "name": "Health Summary",
+        "label": "Health / Fault",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1320,
+        "y": 1540,
+        "wires": []
+    },
+    {
+        "id": "6c2e2f75f52ecbce",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "0d202150326f8b50",
+        "order": 4,
+        "width": 3,
+        "height": 1,
+        "name": "Target RPM",
+        "label": "Target Speed",
+        "format": "{{msg.payload | number:0}} rpm",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1120,
+        "y": 940,
+        "wires": []
+    },
+    {
+        "id": "8458309e785ea70f",
+        "type": "ui_button",
+        "z": "b09dabf0b3dad6af",
+        "name": "Stop or Abort Experiment",
+        "group": "9b761ccab16eab8e",
+        "order": 6,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "label": "STOP / ABORT RUN",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "stop",
+        "payload": "stop",
+        "payloadType": "str",
+        "topic": "logging",
+        "topicType": "str",
+        "x": 250,
+        "y": 1600,
+        "wires": [
+            [
+                "550ab61191657295"
+            ]
+        ]
+    },
+    {
+        "id": "550ab61191657295",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Stop or Abort Experiment",
+        "func": "\nflow.set(\n    \"loggingActive\",\n    false\n);\n\nflow.set(\n    \"experimentPhase\",\n    \"ABORTED\"\n);\n\nvar timers =\n    context.get(\n        \"experimentTimers\"\n    ) || [];\n\ntimers.forEach(\n    function(timer) {\n        clearTimeout(timer);\n    }\n);\n\ncontext.set(\n    \"experimentTimers\",\n    []\n);\n\nreturn [\n    {\n        payload: {\n            clear_fault:\n                true\n        }\n    },\n    {\n        payload:\n            \"STOPPED — CSV retained; active fault cleared\"\n    }\n];\n",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 490,
+        "y": 1600,
+        "wires": [
+            [
+                "e46009338eeb8adb"
+            ],
+            [
+                "21ae6d90ea485b4b"
+            ]
+        ]
+    },
+    {
+        "id": "f925ea0b918e07e4",
+        "type": "inject",
+        "z": "b09dabf0b3dad6af",
+        "name": "Initial Logging Status",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 1.5,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 230,
+        "y": 1640,
+        "wires": [
+            [
+                "065f1d3884c8ccfd"
+            ]
+        ]
+    },
+    {
+        "id": "065f1d3884c8ccfd",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Set Logging Idle",
+        "func": "flow.set(\"loggingActive\", false);\nmsg.payload = \"IDLE — press START NEW 20-MIN RUN\";\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 480,
+        "y": 1640,
+        "wires": [
+            [
+                "21ae6d90ea485b4b"
+            ]
+        ]
+    },
+    {
+        "id": "feade375d5af6936",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "AI Service Online",
+        "func": "\nvar statusCode =\n    Number(msg.statusCode || 200);\n\nif (\n    statusCode >= 200 &&\n    statusCode < 300\n) {\n    msg.payload =\n        \"ONLINE — model inference active\";\n} else {\n    msg.payload =\n        \"AI service returned HTTP \" +\n        statusCode;\n}\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1240,
+        "y": 700,
+        "wires": [
+            [
+                "6ecfde2b7e4e1a28"
+            ]
+        ]
+    },
+    {
+        "id": "363adc4982280604",
+        "type": "ui_dropdown",
+        "z": "b09dabf0b3dad6af",
+        "name": "Fault Scenario Selector",
+        "label": "Fault Scenario",
+        "tooltip": "Scenario applied automatically after the baseline period",
+        "place": "Select fault",
+        "group": "9b761ccab16eab8e",
+        "order": 1,
+        "width": 8,
+        "height": 1,
+        "passthru": true,
+        "multiple": false,
+        "options": [
+            {
+                "label": "F0 — Healthy",
+                "value": "F0",
+                "type": "str"
+            },
+            {
+                "label": "F1 — Mechanical imbalance",
+                "value": "F1",
+                "type": "str"
+            },
+            {
+                "label": "F2 — Electrical overcurrent",
+                "value": "F2",
+                "type": "str"
+            },
+            {
+                "label": "F3 — Cooling degradation",
+                "value": "F3",
+                "type": "str"
+            },
+            {
+                "label": "F4 — Thermal overload",
+                "value": "F4",
+                "type": "str"
+            }
+        ],
+        "payload": "",
+        "topic": "fault_code",
+        "topicType": "str",
+        "className": "",
+        "x": 180,
+        "y": 1720,
+        "wires": [
+            [
+                "0a2aad13774fa385"
+            ]
+        ]
+    },
+    {
+        "id": "086b24f566c138a8",
+        "type": "ui_slider",
+        "z": "b09dabf0b3dad6af",
+        "name": "Fault Severity",
+        "label": "Fault Severity",
+        "tooltip": "0.3 low, 0.6 medium, 0.9 high",
+        "group": "9b761ccab16eab8e",
+        "order": 2,
+        "width": 6,
+        "height": 1,
+        "passthru": true,
+        "outs": "end",
+        "topic": "fault_severity",
+        "topicType": "str",
+        "min": 0,
+        "max": 1,
+        "step": 0.1,
+        "className": "",
+        "x": 180,
+        "y": 1760,
+        "wires": [
+            [
+                "0a2aad13774fa385"
+            ]
+        ]
+    },
+    {
+        "id": "5706b4590659bcbc",
+        "type": "ui_numeric",
+        "z": "b09dabf0b3dad6af",
+        "name": "Replicate Number",
+        "label": "Replicate",
+        "tooltip": "",
+        "group": "9b761ccab16eab8e",
+        "order": 3,
+        "width": 4,
+        "height": 1,
+        "wrap": false,
+        "passthru": true,
+        "topic": "replicate",
+        "topicType": "str",
+        "format": "{{value}}",
+        "min": 1,
+        "max": 99,
+        "step": 1,
+        "className": "",
+        "x": 180,
+        "y": 1800,
+        "wires": [
+            [
+                "0a2aad13774fa385"
+            ]
+        ]
+    },
+    {
+        "id": "0a2aad13774fa385",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Store Experiment Selection",
+        "func": "\nvar config =\n    flow.get(\n        \"experimentConfig\"\n    ) || {\n        fault_code: \"F1\",\n        fault_severity: 0.6,\n        replicate: 1\n    };\n\nif (\n    msg.topic ===\n    \"fault_code\"\n) {\n    config.fault_code =\n        String(msg.payload);\n}\n\nif (\n    msg.topic ===\n    \"fault_severity\"\n) {\n    config.fault_severity =\n        Number(msg.payload);\n}\n\nif (\n    msg.topic ===\n    \"replicate\"\n) {\n    config.replicate =\n        Math.max(\n            1,\n            Math.floor(\n                Number(\n                    msg.payload\n                ) || 1\n            )\n        );\n}\n\nif (\n    config.fault_code ===\n    \"F0\"\n) {\n    config.fault_severity =\n        0;\n}\n\nflow.set(\n    \"experimentConfig\",\n    config\n);\n\nflow.set(\n    \"selectedFaultCode\",\n    config.fault_code\n);\n\nflow.set(\n    \"selectedFaultSeverity\",\n    config.fault_severity\n);\n\nflow.set(\n    \"selectedReplicate\",\n    config.replicate\n);\n\nmsg.payload =\n    config;\n\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 470,
+        "y": 1760,
+        "wires": [
+            [
+                "8c939d7c88161e6f"
+            ]
+        ]
+    },
+    {
+        "id": "8c939d7c88161e6f",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "9b761ccab16eab8e",
+        "order": 4,
+        "width": 18,
+        "height": 1,
+        "name": "Experiment Selection Summary",
+        "label": "Selected Scenario",
+        "format": "{{msg.payload.fault_code}} | Severity {{msg.payload.fault_severity | number:1}} | Replicate {{msg.payload.replicate}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 760,
+        "y": 1760,
+        "wires": []
+    },
+    {
+        "id": "b3db6a67e1e4f602",
+        "type": "inject",
+        "z": "b09dabf0b3dad6af",
+        "name": "Initialise Experiment",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 1.2,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 220,
+        "y": 1880,
+        "wires": [
+            [
+                "e2757a6c62b88e4b"
+            ]
+        ]
+    },
+    {
+        "id": "e2757a6c62b88e4b",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Set Experiment Defaults",
+        "func": "\nvar config = {\n    fault_code: \"F1\",\n    fault_severity: 0.6,\n    replicate: 1\n};\n\nflow.set(\n    \"experimentConfig\",\n    config\n);\n\nflow.set(\n    \"selectedFaultCode\",\n    config.fault_code\n);\n\nflow.set(\n    \"selectedFaultSeverity\",\n    config.fault_severity\n);\n\nflow.set(\n    \"selectedReplicate\",\n    config.replicate\n);\n\nflow.set(\n    \"loggingActive\",\n    false\n);\n\nflow.set(\n    \"experimentPhase\",\n    \"IDLE\"\n);\n\nflow.set(\n    \"experimentRunId\",\n    \"\"\n);\n\nreturn [\n    {\n        payload:\n            config.fault_code\n    },\n    {\n        payload:\n            config.fault_severity\n    },\n    {\n        payload:\n            config.replicate\n    },\n    {\n        payload:\n            config\n    },\n    {\n        payload:\n            \"IDLE — configure scenario and press START 10-MIN EXPERIMENT\"\n    }\n];\n",
+        "outputs": 5,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 500,
+        "y": 1880,
+        "wires": [
+            [
+                "363adc4982280604"
+            ],
+            [
+                "086b24f566c138a8"
+            ],
+            [
+                "5706b4590659bcbc"
+            ],
+            [
+                "8c939d7c88161e6f"
+            ],
+            [
+                "21ae6d90ea485b4b"
+            ]
+        ]
+    },
+    {
+        "id": "5322d92a260de723",
+        "type": "function",
+        "z": "b09dabf0b3dad6af",
+        "name": "Fault Status",
+        "func": "\nvar state =\n    msg.payload || {};\n\nreturn [\n    {\n        payload:\n            state.experimentPhase ||\n            \"IDLE\"\n    },\n    {\n        payload:\n            state.faultCode ||\n            \"F0\"\n    },\n    {\n        payload:\n            state.faultLabel ||\n            \"healthy\"\n    },\n    {\n        payload:\n            Number(\n                state.faultSeverity ||\n                0\n            )\n    },\n    {\n        payload:\n            Number(\n                state.healthOverall ||\n                100\n            )\n    }\n];\n",
+        "outputs": 5,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 830,
+        "y": 1900,
+        "wires": [
+            [
+                "b4d04d0f82517e9b"
+            ],
+            [
+                "47d080fa5f27841f"
+            ],
+            [
+                "2bec8c3e422c8f79"
+            ],
+            [
+                "da1df5630bc8d548"
+            ],
+            [
+                "a4a567506523a6d1"
+            ]
+        ]
+    },
+    {
+        "id": "b4d04d0f82517e9b",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "9b761ccab16eab8e",
+        "order": 8,
+        "width": 6,
+        "height": 1,
+        "name": "Experiment Phase",
+        "label": "Phase",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1110,
+        "y": 1840,
+        "wires": []
+    },
+    {
+        "id": "47d080fa5f27841f",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "9b761ccab16eab8e",
+        "order": 9,
+        "width": 6,
+        "height": 1,
+        "name": "Ground Truth Fault Code",
+        "label": "Ground Truth",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1130,
+        "y": 1880,
+        "wires": []
+    },
+    {
+        "id": "2bec8c3e422c8f79",
+        "type": "ui_text",
+        "z": "b09dabf0b3dad6af",
+        "group": "9b761ccab16eab8e",
+        "order": 10,
+        "width": 6,
+        "height": 1,
+        "name": "Ground Truth Fault Label",
+        "label": "Fault Label",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": "",
+        "font": "",
+        "fontSize": "",
+        "color": "",
+        "x": 1130,
+        "y": 1920,
+        "wires": []
+    },
+    {
+        "id": "da1df5630bc8d548",
+        "type": "ui_gauge",
+        "z": "b09dabf0b3dad6af",
+        "name": "Ground Truth Severity",
+        "group": "9b761ccab16eab8e",
+        "order": 11,
+        "width": 6,
+        "height": 3,
+        "gtype": "gage",
+        "title": "Fault Severity",
+        "label": "",
+        "format": "{{value | number:2}}",
+        "min": 0,
+        "max": 1,
+        "colors": [
+            "#4caf50",
+            "#ffeb3b",
+            "#f44336"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1130,
+        "y": 1960,
+        "wires": []
+    },
+    {
+        "id": "a4a567506523a6d1",
+        "type": "ui_gauge",
+        "z": "b09dabf0b3dad6af",
+        "name": "Embedded Health Gauge",
+        "group": "9b761ccab16eab8e",
+        "order": 12,
+        "width": 6,
+        "height": 3,
+        "gtype": "gage",
+        "title": "Asset Health",
+        "label": "%",
+        "format": "{{value | number:0}}",
+        "min": 0,
+        "max": 100,
+        "colors": [
+            "#f44336",
+            "#ffeb3b",
+            "#4caf50"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1120,
+        "y": 2000,
+        "wires": []
+    },
+    {
+        "id": "mqtt_broker_ai",
+        "type": "mqtt-broker",
+        "name": "SimDataBroker",
+        "broker": "172.20.10.3",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "grp_alerts_ai",
+        "type": "ui_group",
+        "name": "Alerts",
+        "tab": "ui_tab_dti",
+        "order": 5,
+        "disp": true,
+        "width": "12",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "grp_overview_ai",
+        "type": "ui_group",
+        "name": "Process Overview",
+        "tab": "ui_tab_dti",
+        "order": 1,
+        "disp": true,
+        "width": "4",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "grp_trends_ai",
+        "type": "ui_group",
+        "name": "Performance Trends",
+        "tab": "ui_tab_dti",
+        "order": 2,
+        "disp": true,
+        "width": "12",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "grp_energy_ai",
+        "type": "ui_group",
+        "name": "Sustainability Index",
+        "tab": "ui_tab_dti",
+        "order": 3,
+        "disp": true,
+        "width": "12",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "grp_ai_ai",
+        "type": "ui_group",
+        "name": "AI / Fault Intelligence",
+        "tab": "ui_tab_dti",
+        "order": 4,
+        "disp": true,
+        "width": "12",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "076009a625ed05be",
+        "type": "ui_group",
+        "name": "Supervisory Control",
+        "tab": "ui_tab_dti",
+        "order": 2,
+        "disp": true,
+        "width": "18",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "0d202150326f8b50",
+        "type": "ui_group",
+        "name": "Closed-Loop Status",
+        "tab": "ui_tab_dti",
+        "order": 4,
+        "disp": true,
+        "width": "18",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "9b761ccab16eab8e",
+        "type": "ui_group",
+        "name": "Fault Experiment",
+        "tab": "ui_tab_dti",
+        "order": 3,
+        "disp": true,
+        "width": "18",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "11dd2b71c21e57ba",
+        "type": "ui_group",
+        "name": "Digital Twin State",
+        "tab": "ui_tab_dti",
+        "order": 1,
+        "disp": true,
+        "width": "36",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "ui_tab_dti",
+        "type": "ui_tab",
+        "name": "Digital Twin Intelligence",
+        "icon": "assessment",
+        "order": 1
+    },
+    {
+        "id": "672a492af77ca18f",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-dashboard": "3.6.6"
+        }
+    }
+]

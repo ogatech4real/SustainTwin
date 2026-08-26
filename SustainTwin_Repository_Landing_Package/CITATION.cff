@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use SustainTwin, please cite the associated manuscript and archived research artifact."
+title: "SustainTwin: A Physics-Aware Digital Twin Framework for Controlled Fault-Data Generation and Diagnostic Evaluation"
+type: software
+version: "1.0.0-manuscript"
+date-released: "2026-08-27"
+authors:
+  - family-names: "Ogabi"
+    given-names: "Adewale"
+    email: "hello@adewaleogabi.info"
+  - family-names: "Afaqui"
+    given-names: "M. Shahwaiz"
+  - family-names: "Aggarwal"
+    given-names: "Geetika"
+  - family-names: "Short"
+    given-names: "Michael"
+repository-code: "REPLACE_WITH_GITHUB_REPOSITORY_URL"
+abstract: "SustainTwin is a lightweight physics-aware digital twin research framework for controlled fault-data generation, traceable experimentation and leakage-aware diagnostic evaluation in a fan-driven thermal process."
+keywords:
+  - digital twin
+  - fault diagnosis
+  - predictive maintenance
+  - MQTT
+  - Node-RED
+  - physics-aware modelling
+  - condition monitoring
+license: "NOASSERTION"
