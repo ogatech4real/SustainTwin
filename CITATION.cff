@@ -1,4 +1,5 @@
 cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
 title: "SustainTwin: A Physics-Aware Digital Twin Framework for Controlled Fault-Data Generation and Diagnostic Evaluation"
 type: software
 version: "1.0.0-manuscript"
@@ -24,5 +25,4 @@ keywords:
   - physics-aware modelling
   - condition monitoring
 
-https://doi.org/10.5281/zenodo.22119234
 license: "MIT"
