@@ -143,43 +143,6 @@ Run D ───── TEST
 ```
 This reduces sample-level leakage and provides a more defensible estimate of cross-run performance than random row-wise splitting.
 ---
-Repository layout
-```text
-PhysDiagTwin/
-│
-├── README.md
-├── CITATION.cff
-├── LICENSE
-├── requirements.txt
-│
-├── firmware/
-│   └── Arduino_UNO_R4_WiFi/
-│
-├── node-red/
-│   ├── flows/
-│   └── dashboard/
-│
-├── data/
-│   ├── experiment_results/
-│   └── qualified/
-│
-├── analysis/
-│   ├── preprocessing/
-│   ├── physics_validation/
-│   ├── external_validation/
-│   ├── machine_learning/
-│   └── figure_generation/
-│
-├── Manuscript_Figures/
-│   ├── PhysDiagTwin_NodeRED_Dashboard.png
-│   ├── architecture.png
-│   ├── Fig_03_external_behavioural_validation.png
-│   └── Fig_06_full_temporal_confusion_matrix.png
-│
-└── docs/
-    └── supplementary_material/
-```
----
 Reproducing the evidence chain
 ```text
 Physics-aware process model
@@ -224,12 +187,6 @@ v1.0.0-manuscript
 Responsible use
 PhysDiagTwin is intended for digital-twin research, controlled fault-data experimentation, condition-monitoring research, machine-learning evaluation, teaching and prototyping.
 It is not a certified safety system, industrial protection system or substitute for established machine-protection and maintenance procedures.
----
-Authors
-Adewale Ogabi · M. Shahwaiz Afaqui · Geetika Aggarwal · Michael Short
-School of Computing, Engineering and Digital Technologies  
-Teesside University, United Kingdom
-Correspondence: Adewale Ogabi — `hello@adewaleogabi.info`
 ---
 Acknowledgement
 The authors gratefully acknowledge the research environment and support provided by the research team at Teesside University.
