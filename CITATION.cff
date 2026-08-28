@@ -1,33 +1,52 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below."
-title: "SustainTwin: A Physics-Aware Digital Twin Framework for Controlled Fault-Data Generation and Diagnostic Evaluation"
+message: "If you use PhysDiagTwin in your research, please cite it using the metadata below."
+
+title: "PhysDiagTwin: A Physics-Aware Digital Twin Framework for Controlled Fault-Data Generation and Industrial Process Diagnosis"
+
 type: software
-version: "1.0.0-manuscript"
-date-released: "2026-08-27"
 
 authors:
   - family-names: "Ogabi"
     given-names: "Adewale"
-    email: "hello@adewaleogabi.info"
 
   - family-names: "Aggarwal"
     given-names: "Geetika"
 
-  - family-names: "Afaqui"
-    given-names: "M. Shahwaiz"
-
   - family-names: "Short"
     given-names: "Michael"
 
-repository-code: "https://github.com/ogatech4real/SustainTwin"
-abstract: "SustainTwin is a lightweight physics-aware digital twin research framework for controlled fault-data generation, traceable experimentation and leakage-aware diagnostic evaluation in a fan-driven thermal process."
-keywords:
-  - digital twin
-  - fault diagnosis
-  - predictive maintenance
-  - MQTT
-  - Node-RED
-  - physics-aware modelling
-  - condition monitoring
+  - family-names: "Akinadé"
+    given-names: "Olúgbénga"
+
+  - family-names: "Pillai"
+    given-names: "Gobind"
+
+version: "1.0.0"
+
+date-released: "2026-08-28"
+
+doi: "10.5281/zenodo.22119234"
+
+url: "https://github.com/ogatech4real/PhysDiagTwin"
+
+repository-code: "https://github.com/ogatech4real/PhysDiagTwin"
 
 license: "MIT"
+
+keywords:
+  - "digital twin"
+  - "physics-aware modelling"
+  - "fault diagnosis"
+  - "fault-data generation"
+  - "predictive maintenance"
+  - "industrial IoT"
+  - "condition monitoring"
+  - "machine learning"
+  - "MQTT"
+  - "Node-RED"
+
+abstract: >-
+  PhysDiagTwin is a lightweight physics-aware digital twin framework for controlled fault-data generation and diagnostic evaluation in a fan-driven
+  thermal process. It integrates a reduced-order dynamic process model, severity-controlled fault perturbation, bidirectional MQTT communication,
+  automated Node-RED experiment orchestration, traceable ground truth, and leakage-aware machine-learning evaluation. The framework supports controlled
+  investigation of mechanical imbalance, electrical overcurrent, cooling degradation, and thermal overload across programmed fault severity levels.
